@@ -59,6 +59,18 @@ export async function criarInstancia(dados) {
 
   // 5. Subir no PM2 usando ecosystem.config.js se existir
   const ecosystemPath = path.join(destino, 'ecosystem.config.js');
+
+  if (fs.existsSync(ecosystemPath)) {
+    // Corrige o nome hardcoded no ecosystem para usar o nome da instância
+    const conteudo = fs.readFileSync(ecosystemPath, 'utf8');
+    const corrigido = conteudo.replace(
+      /name:\s*['"][^'"]+['"]/,
+      `name: '${nome}'`
+    );
+    fs.writeFileSync(ecosystemPath, corrigido, 'utf8');
+    console.log(`[IA] ecosystem.config.js atualizado com nome "${nome}".`);
+  }
+
   const scriptPath = fs.existsSync(ecosystemPath)
     ? ecosystemPath
     : path.join(destino, 'app.js');
