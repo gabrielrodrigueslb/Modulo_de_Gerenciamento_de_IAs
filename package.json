@@ -1,0 +1,15 @@
+{
+  "name": "unico-integra-ia",
+  "version": "1.0.0",
+  "description": "Módulo de gerenciamento de IAs via PM2 para o Único Integra",
+  "type": "module",
+  "main": "src/app.js",
+  "scripts": {
+    "start": "node src/app.js",
+    "dev": "node --watch src/app.js"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "dotenv": "^17.2.3"
+  }
+}
