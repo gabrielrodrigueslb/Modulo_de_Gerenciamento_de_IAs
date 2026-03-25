@@ -65,7 +65,7 @@ export async function criarInstancia(dados) {
     const conteudo = fs.readFileSync(ecosystemPath, 'utf8');
     const corrigido = conteudo.replace(
       /name:\s*['"][^'"]+['"]/,
-      `name: '${nome}'`
+      `name: '${nome}'`,
     );
     fs.writeFileSync(ecosystemPath, corrigido, 'utf8');
     console.log(`[IA] ecosystem.config.js atualizado com nome "${nome}".`);
@@ -79,11 +79,22 @@ export async function criarInstancia(dados) {
   execSync(`pm2 start ${scriptPath} --name ${nome}`, { stdio: 'pipe' });
   execSync(`pm2 save`, { stdio: 'pipe' });
 
-  console.log(`[IA] ✅ Instância "${nome}" criada e rodando na porta ${porta}.`);
+  const envGravado = fs.readFileSync(path.join(destino, '.env'), 'utf8');
+  const portaConfirmada = parseInt(
+    envGravado
+      .split('\n')
+      .find((l) => l.startsWith('PORT='))
+      ?.split('=')[1],
+  );
+
+  console.log(
+    `[IA] ✅ Instância "${nome}" criada e rodando na porta ${portaConfirmada}.`,
+  );
+
   return {
     sucesso: true,
     mensagem: `Instância "${nome}" criada com sucesso.`,
-    porta,
+    porta: portaConfirmada, // ← fonte de verdade: o .env gravado
   };
 }
 
@@ -121,12 +132,14 @@ export async function logsInstancia(nome, linhas = 50) {
       { timeout: 10000 },
       (erro, stdout, stderr) => {
         if (erro && !stdout && !stderr) {
-          return reject(new Error(`Erro ao buscar logs de "${nome}": ${erro.message}`));
+          return reject(
+            new Error(`Erro ao buscar logs de "${nome}": ${erro.message}`),
+          );
         }
         const saida = (stdout + stderr).trim();
         const linhasLog = saida.split('\n').filter(Boolean);
         resolve({ nome, linhas: linhasLog });
-      }
+      },
     );
   });
 }
@@ -136,7 +149,9 @@ export async function reiniciarInstancia(nome) {
     execSync(`pm2 restart ${nome}`, { stdio: 'pipe' });
     return { sucesso: true, mensagem: `Instância "${nome}" reiniciada.` };
   } catch {
-    throw new Error(`Não foi possível reiniciar "${nome}". Verifique se ela existe no PM2.`);
+    throw new Error(
+      `Não foi possível reiniciar "${nome}". Verifique se ela existe no PM2.`,
+    );
   }
 }
 
@@ -145,7 +160,9 @@ export async function pararInstancia(nome) {
     execSync(`pm2 stop ${nome}`, { stdio: 'pipe' });
     return { sucesso: true, mensagem: `Instância "${nome}" parada.` };
   } catch {
-    throw new Error(`Não foi possível parar "${nome}". Verifique se ela existe no PM2.`);
+    throw new Error(
+      `Não foi possível parar "${nome}". Verifique se ela existe no PM2.`,
+    );
   }
 }
 
