@@ -38,10 +38,11 @@ CORS_ORIGIN=*
 Ao chamar `POST /api/ia/criar`, o modulo faz exatamente este fluxo:
 
 1. Clona o repositorio configurado em `REPO_URL`
-2. Executa `npm install` dentro da pasta clonada
-3. Cria `.env` a partir de `.env.example` ou `.env.exemplo`, se existir
-4. Mescla no `.env` as variaveis enviadas na API
-5. Sobe a instancia com `pm2 start app.js --name <nome>`
+2. Testa uma a uma as portas entre `PORTA_INICIO` e `PORTA_FIM` e reserva a primeira livre
+3. Executa `npm install` dentro da pasta clonada
+4. Cria `.env` a partir de `.env.example` ou `.env.exemplo`, se existir
+5. Mescla no `.env` as variaveis enviadas na API
+6. Libera a porta reservada e sobe a instancia com `pm2 start app.js --name <nome>`
 
 Se o repositorio clonado nao tiver arquivo de exemplo, o modulo cria o `.env`
 somente com as variaveis recebidas pela API.

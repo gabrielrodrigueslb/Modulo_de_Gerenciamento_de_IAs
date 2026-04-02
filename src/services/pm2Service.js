@@ -1,7 +1,7 @@
 import { exec, execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import { proximaPortaLivre } from '../utils/portaManager.js';
+import { reservarProximaPortaLivre } from '../utils/portaManager.js';
 
 const APPS_DIR = path.resolve(process.env.APPS_DIR || '/apps/ias');
 const REPO_URL = process.env.REPO_URL;
@@ -216,41 +216,55 @@ export async function criarInstancia(dados) {
     throw new Error(`Ja existe uma instancia com o nome "${nome}".`);
   }
 
-  const porta = await proximaPortaLivre();
-  console.log(`[IA] Porta alocada automaticamente: ${porta}`);
+  const reservaPorta = await reservarProximaPortaLivre();
+  let reservaConcluida = false;
 
-  console.log(`[IA] Clonando ${REPO_URL} em ${destino}...`);
-  executarArquivo('git', ['clone', REPO_URL, destino]);
+  try {
+    const { porta } = reservaPorta;
+    console.log(`[IA] Porta reservada automaticamente: ${porta}`);
 
-  console.log('[IA] Instalando dependencias...');
-  executarArquivo('npm', ['install'], { cwd: destino });
+    console.log(`[IA] Clonando ${REPO_URL} em ${destino}...`);
+    executarArquivo('git', ['clone', REPO_URL, destino]);
 
-  const { templatePath } = prepararEnvInstancia(destino, dados, porta);
-  if (templatePath) {
-    console.log(`[IA] .env criado a partir de ${path.basename(templatePath)}.`);
-  } else {
-    console.warn(
-      '[IA] Repositorio clonado sem .env.example; .env criado apenas com os dados enviados.',
+    console.log('[IA] Instalando dependencias...');
+    executarArquivo('npm', ['install'], { cwd: destino });
+
+    const { templatePath } = prepararEnvInstancia(destino, dados, porta);
+    if (templatePath) {
+      console.log(`[IA] .env criado a partir de ${path.basename(templatePath)}.`);
+    } else {
+      console.warn(
+        '[IA] Repositorio clonado sem .env.example; .env criado apenas com os dados enviados.',
+      );
+    }
+
+    console.log(`[IA] Liberando a reserva da porta ${porta} para iniciar o processo...`);
+    await reservaPorta.liberarParaUso();
+
+    console.log(`[IA] Subindo "${nome}" com pm2 start app.js...`);
+    executarPm2(['start', 'app.js', '--name', nome], destino, {
+      PORT: String(porta),
+    });
+    executarArquivo('pm2', ['save']);
+    await reservaPorta.concluir();
+    reservaConcluida = true;
+
+    const portaConfirmada = parseInt(lerValorEnv(destino, 'PORT'), 10);
+
+    console.log(
+      `[IA] Instancia "${nome}" criada e rodando na porta ${portaConfirmada}.`,
     );
+
+    return {
+      sucesso: true,
+      mensagem: `Instancia "${nome}" criada com sucesso.`,
+      porta: portaConfirmada,
+    };
+  } finally {
+    if (!reservaConcluida) {
+      await reservaPorta.descartar();
+    }
   }
-
-  console.log(`[IA] Subindo "${nome}" com pm2 start app.js...`);
-  executarPm2(['start', 'app.js', '--name', nome], destino, {
-    PORT: String(porta),
-  });
-  executarArquivo('pm2', ['save']);
-
-  const portaConfirmada = parseInt(lerValorEnv(destino, 'PORT'), 10);
-
-  console.log(
-    `[IA] Instancia "${nome}" criada e rodando na porta ${portaConfirmada}.`,
-  );
-
-  return {
-    sucesso: true,
-    mensagem: `Instancia "${nome}" criada com sucesso.`,
-    porta: portaConfirmada,
-  };
 }
 
 export async function statusInstancia(nome) {
