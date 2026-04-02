@@ -31,7 +31,7 @@ function montarEnv(dados) {
     `DB_NAME=${dados.db_nome}`,
     `DB_USER=${dados.db_usuario}`,
     `DB_PASSWORD=${dados.db_senha}`,
-    `UNIDADE_NEGOCIO_ID=${dados.unidade_negocio_id || 65984}`
+    `UNIDADE_NEGOCIO_ID=${dados.unidade_negocio_id || ''}`
   ].join('\n');
 }
 

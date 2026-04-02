@@ -1,10 +1,20 @@
-import { execSync, exec } from 'child_process';
+import { exec, execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { proximaPortaLivre } from '../utils/portaManager.js';
 
-const APPS_DIR = process.env.APPS_DIR || '/apps/ias';
+const APPS_DIR = path.resolve(process.env.APPS_DIR || '/apps/ias');
 const REPO_URL = process.env.REPO_URL;
+const MAX_BUFFER = 10 * 1024 * 1024;
+const ENV_TEMPLATE_FILES = ['.env.example', '.env.exemplo'];
+
+function binario(nome) {
+  if (process.platform === 'win32' && (nome === 'npm' || nome === 'pm2')) {
+    return `${nome}.cmd`;
+  }
+
+  return nome;
+}
 
 function garantirDiretorioBase() {
   if (!fs.existsSync(APPS_DIR)) {
@@ -12,71 +22,183 @@ function garantirDiretorioBase() {
   }
 }
 
-function montarEnv(dados, porta) {
-  return [
-    `PORT=${porta}`,
-    `OPENAI_API_KEY=${dados.openai_api_key}`,
-    `DB_HOST=${dados.db_host}`,
-    `DB_PORT=${dados.db_port || 5432}`,
-    `DB_NAME=${dados.db_name}`,
-    `DB_USER=${dados.db_user}`,
-    `DB_PASSWORD=${dados.db_password}`,
-    `UNIDADE_NEGOCIO_ID=${dados.unidade_negocio_id || 65984}`,
-  ].join('\n');
+function executarArquivo(comando, args, opcoes = {}) {
+  return execFileSync(binario(comando), args, {
+    encoding: 'utf8',
+    maxBuffer: MAX_BUFFER,
+    stdio: 'pipe',
+    ...opcoes,
+  });
 }
 
-function lerValorEnv(destino, chave) {
+function lerEnvArquivo(destino) {
   const envPath = path.join(destino, '.env');
 
   if (!fs.existsSync(envPath)) {
-    return null;
+    return {};
   }
 
-  const linha = fs
+  return fs
     .readFileSync(envPath, 'utf8')
     .split(/\r?\n/)
-    .find((item) => item.startsWith(`${chave}=`));
+    .reduce((acc, linha) => {
+      const conteudo = linha.trim();
 
-  if (!linha) {
-    return null;
-  }
+      if (!conteudo || conteudo.startsWith('#')) {
+        return acc;
+      }
 
-  return linha.slice(chave.length + 1).trim().replace(/^['"]|['"]$/g, '');
+      const separador = conteudo.indexOf('=');
+      if (separador === -1) {
+        return acc;
+      }
+
+      const chave = conteudo.slice(0, separador).trim();
+      const valor = conteudo
+        .slice(separador + 1)
+        .trim()
+        .replace(/^['"]|['"]$/g, '');
+
+      if (chave) {
+        acc[chave] = valor;
+      }
+
+      return acc;
+    }, {});
 }
 
-function sincronizarEcosystem(destino, nome) {
-  const ecosystemPath = path.join(destino, 'ecosystem.config.js');
+function lerValorEnv(destino, chave) {
+  return lerEnvArquivo(destino)[chave] ?? null;
+}
 
-  if (!fs.existsSync(ecosystemPath)) {
-    return null;
+function montarAmbienteInstancia(destino, sobrescritas = {}) {
+  return {
+    ...process.env,
+    ...lerEnvArquivo(destino),
+    ...sobrescritas,
+  };
+}
+
+function executarPm2(args, destino, sobrescritasEnv = {}) {
+  return executarArquivo('pm2', args, {
+    cwd: destino,
+    env: montarAmbienteInstancia(destino, sobrescritasEnv),
+  });
+}
+
+function obterPortaInstancia(nome, instanciaPm2 = null) {
+  const destino = path.join(APPS_DIR, nome);
+  const portaEnv = lerValorEnv(destino, 'PORT');
+  const portaPm2 = instanciaPm2?.pm2_env?.PORT || instanciaPm2?.pm2_env?.env?.PORT;
+
+  if (portaEnv && portaPm2 && String(portaEnv) !== String(portaPm2)) {
+    console.warn(
+      `[IA] Porta divergente para "${nome}": .env=${portaEnv}, PM2=${portaPm2}.`,
+    );
   }
 
-  const portaAtual = lerValorEnv(destino, 'PORT');
-  const conteudo = fs.readFileSync(ecosystemPath, 'utf8');
-  let atualizado = conteudo.replace(
-    /name:\s*['"][^'"]+['"]/,
-    `name: '${nome}'`,
-  );
+  return portaEnv || portaPm2 || null;
+}
 
-  if (portaAtual) {
-    if (/PORT:\s*['"]?[^,'"\n]+['"]?/.test(atualizado)) {
-      atualizado = atualizado.replace(
-        /PORT:\s*['"]?[^,'"\n]+['"]?/,
-        `PORT: ${portaAtual}`,
-      );
-    } else if (/NODE_ENV:\s*['"][^'"]+['"],?/.test(atualizado)) {
-      atualizado = atualizado.replace(
-        /NODE_ENV:\s*['"][^'"]+['"],?/,
-        (match) => `${match}\n        PORT: ${portaAtual},`,
-      );
+function escaparRegex(texto) {
+  return texto.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function serializarValorEnv(valor) {
+  const texto = String(valor ?? '');
+
+  if (texto === '') {
+    return '""';
+  }
+
+  if (/^[A-Za-z0-9_./:@-]+$/.test(texto)) {
+    return texto;
+  }
+
+  return JSON.stringify(texto);
+}
+
+function templateEnvPath(destino) {
+  for (const nomeArquivo of ENV_TEMPLATE_FILES) {
+    const caminho = path.join(destino, nomeArquivo);
+
+    if (fs.existsSync(caminho)) {
+      return caminho;
     }
   }
 
-  if (atualizado !== conteudo) {
-    fs.writeFileSync(ecosystemPath, atualizado, 'utf8');
+  return null;
+}
+
+function montarVariaveisInstancia(dados, porta) {
+  const variaveis = {
+    PORT: String(porta),
+    OPENAI_API_KEY: dados.openai_api_key,
+    DB_HOST: dados.db_host,
+    DB_PORT: String(dados.db_port ?? 5432),
+    DB_NAME: dados.db_name,
+    DB_USER: dados.db_user,
+    DB_PASSWORD: dados.db_password,
+    UNIDADE_NEGOCIO_ID: String(dados.unidade_negocio_id ?? 65984),
+  };
+
+  if (dados.env && typeof dados.env === 'object' && !Array.isArray(dados.env)) {
+    for (const [chave, valor] of Object.entries(dados.env)) {
+      if (valor === undefined || valor === null) {
+        continue;
+      }
+
+      variaveis[chave] = String(valor);
+    }
   }
 
-  return ecosystemPath;
+  return variaveis;
+}
+
+function aplicarVariaveisEnv(conteudoBase, variaveis) {
+  let conteudo = conteudoBase.replace(/\r\n/g, '\n');
+
+  for (const [chave, valor] of Object.entries(variaveis)) {
+    if (!chave || valor === undefined || valor === null) {
+      continue;
+    }
+
+    const linha = `${chave}=${serializarValorEnv(valor)}`;
+    const regex = new RegExp(`^\\s*${escaparRegex(chave)}\\s*=.*$`, 'm');
+
+    if (regex.test(conteudo)) {
+      conteudo = conteudo.replace(regex, linha);
+      continue;
+    }
+
+    if (conteudo && !conteudo.endsWith('\n')) {
+      conteudo += '\n';
+    }
+
+    conteudo += `${linha}\n`;
+  }
+
+  return conteudo;
+}
+
+function prepararEnvInstancia(destino, dados, porta) {
+  const envPath = path.join(destino, '.env');
+  const templatePath = templateEnvPath(destino);
+  const conteudoBase = templatePath
+    ? fs.readFileSync(templatePath, 'utf8')
+    : '';
+
+  const conteudoFinal = aplicarVariaveisEnv(
+    conteudoBase,
+    montarVariaveisInstancia(dados, porta),
+  );
+
+  fs.writeFileSync(envPath, conteudoFinal, 'utf8');
+
+  return {
+    envPath,
+    templatePath,
+  };
 }
 
 export async function criarInstancia(dados) {
@@ -98,28 +220,25 @@ export async function criarInstancia(dados) {
   console.log(`[IA] Porta alocada automaticamente: ${porta}`);
 
   console.log(`[IA] Clonando ${REPO_URL} em ${destino}...`);
-  execSync(`git clone ${REPO_URL} ${destino}`, { stdio: 'pipe' });
-
-  const envContent = montarEnv(dados, porta);
-  fs.writeFileSync(path.join(destino, '.env'), envContent, 'utf8');
-  console.log(`[IA] .env criado para "${nome}" na porta ${porta}.`);
+  executarArquivo('git', ['clone', REPO_URL, destino]);
 
   console.log('[IA] Instalando dependencias...');
-  execSync('npm install', { cwd: destino, stdio: 'pipe' });
+  executarArquivo('npm', ['install'], { cwd: destino });
 
-  const ecosystemPath = sincronizarEcosystem(destino, nome);
-
-  if (ecosystemPath) {
-    console.log(
-      `[IA] ecosystem.config.js sincronizado com nome "${nome}" e porta ${porta}.`,
+  const { templatePath } = prepararEnvInstancia(destino, dados, porta);
+  if (templatePath) {
+    console.log(`[IA] .env criado a partir de ${path.basename(templatePath)}.`);
+  } else {
+    console.warn(
+      '[IA] Repositorio clonado sem .env.example; .env criado apenas com os dados enviados.',
     );
   }
 
-  const scriptPath = ecosystemPath || path.join(destino, 'app.js');
-
-  console.log(`[IA] Subindo no PM2 como "${nome}"...`);
-  execSync(`pm2 start "${scriptPath}" --name "${nome}"`, { stdio: 'pipe' });
-  execSync('pm2 save', { stdio: 'pipe' });
+  console.log(`[IA] Subindo "${nome}" com pm2 start app.js...`);
+  executarPm2(['start', 'app.js', '--name', nome], destino, {
+    PORT: String(porta),
+  });
+  executarArquivo('pm2', ['save']);
 
   const portaConfirmada = parseInt(lerValorEnv(destino, 'PORT'), 10);
 
@@ -136,7 +255,7 @@ export async function criarInstancia(dados) {
 
 export async function statusInstancia(nome) {
   try {
-    const saida = execSync('pm2 jlist', { stdio: 'pipe' }).toString();
+    const saida = executarArquivo('pm2', ['jlist']);
     const lista = JSON.parse(saida);
     const instancia = lista.find((processo) => processo.name === nome);
 
@@ -154,7 +273,7 @@ export async function statusInstancia(nome) {
         ? Math.round(instancia.monit.memory / 1024 / 1024)
         : null,
       cpu_percent: instancia.monit?.cpu ?? null,
-      porta: instancia.pm2_env?.PORT || null,
+      porta: obterPortaInstancia(nome, instancia),
     };
   } catch {
     throw new Error(`Nao foi possivel obter status de "${nome}".`);
@@ -183,18 +302,7 @@ export async function logsInstancia(nome, linhas = 50) {
 
 export async function reiniciarInstancia(nome) {
   try {
-    const destino = path.join(APPS_DIR, nome);
-    const ecosystemPath = sincronizarEcosystem(destino, nome);
-
-    if (ecosystemPath && fs.existsSync(ecosystemPath)) {
-      execSync(
-        `pm2 restart "${ecosystemPath}" --only "${nome}" --update-env`,
-        { stdio: 'pipe' },
-      );
-    } else {
-      execSync(`pm2 restart "${nome}" --update-env`, { stdio: 'pipe' });
-    }
-
+    executarArquivo('pm2', ['restart', nome]);
     return { sucesso: true, mensagem: `Instancia "${nome}" reiniciada.` };
   } catch {
     throw new Error(
@@ -205,7 +313,7 @@ export async function reiniciarInstancia(nome) {
 
 export async function pararInstancia(nome) {
   try {
-    execSync(`pm2 stop "${nome}"`, { stdio: 'pipe' });
+    executarArquivo('pm2', ['stop', nome]);
     return { sucesso: true, mensagem: `Instancia "${nome}" parada.` };
   } catch {
     throw new Error(
@@ -221,7 +329,7 @@ export async function listarInstancias() {
     return fs.statSync(path.join(APPS_DIR, item)).isDirectory();
   });
 
-  const saida = execSync('pm2 jlist', { stdio: 'pipe' }).toString();
+  const saida = executarArquivo('pm2', ['jlist']);
   const pm2Lista = JSON.parse(saida);
   const pm2Map = new Map(pm2Lista.map((processo) => [processo.name, processo]));
 
@@ -230,7 +338,7 @@ export async function listarInstancias() {
     return {
       nome,
       status: pm2?.pm2_env?.status || 'parada/nao registrada',
-      porta: pm2?.pm2_env?.PORT || null,
+      porta: obterPortaInstancia(nome, pm2),
     };
   });
 }

@@ -1,5 +1,3 @@
-// Campos obrigatórios para criar uma nova instância de IA
-// Porta NÃO está aqui — é alocada automaticamente pelo servidor
 const CAMPOS_OBRIGATORIOS = [
   'nome',
   'openai_api_key',
@@ -14,15 +12,25 @@ export function validarCriacaoInstancia(req, res, next) {
 
   if (ausentes.length > 0) {
     return res.status(400).json({
-      erro: 'Campos obrigatórios ausentes.',
+      erro: 'Campos obrigatorios ausentes.',
       campos: ausentes,
     });
   }
 
-  // Nome só pode ter letras, números, hífen e underscore — vira nome do processo no PM2
   if (!/^[a-zA-Z0-9-_]+$/.test(req.body.nome)) {
     return res.status(400).json({
-      erro: 'O campo "nome" só pode conter letras, números, hífens e underscores.',
+      erro: 'O campo "nome" so pode conter letras, numeros, hifens e underscores.',
+    });
+  }
+
+  if (
+    req.body.env !== undefined &&
+    (typeof req.body.env !== 'object' ||
+      req.body.env === null ||
+      Array.isArray(req.body.env))
+  ) {
+    return res.status(400).json({
+      erro: 'O campo "env" deve ser um objeto com pares chave/valor.',
     });
   }
 
