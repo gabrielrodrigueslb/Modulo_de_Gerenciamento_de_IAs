@@ -19,8 +19,8 @@ const TYPE_CONFIGS = {
   alpha: {
     tipo: 'alpha',
     appsDir: DEFAULT_APPS_ROOT,
-    repoUrl: process.env.ALPHA_REPO_URL || process.env.REPO_URL || null,
-    repoBranch: process.env.ALPHA_REPO_BRANCH || process.env.REPO_BRANCH || null,
+    repoUrl: process.env.REPO_URL || null,
+    repoBranch: process.env.REPO_BRANCH || null,
   },
   trier: {
     tipo: 'trier',
@@ -693,7 +693,9 @@ export async function criarInstancia(dados) {
 
   if (!config.repoUrl) {
     throw new Error(
-      `Repositorio nao configurado para o tipo "${tipo}". Ajuste ${tipo.toUpperCase()}_REPO_URL no .env.`,
+      `Repositorio nao configurado para o tipo "${tipo}". Ajuste ${
+        tipo === 'alpha' ? 'REPO_URL' : 'TRIER_REPO_URL'
+      } no .env.`,
     );
   }
 

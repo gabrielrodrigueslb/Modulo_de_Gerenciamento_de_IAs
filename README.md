@@ -33,8 +33,7 @@ APPS_DIR=./servicos_ias/
 APPS_DIR_TRIER=./servicos_ias/trier
 
 REPO_URL=https://github.com/UnicoContato/alpha7_IA_view.git
-ALPHA_REPO_URL=https://github.com/UnicoContato/alpha7_IA_view.git
-ALPHA_REPO_BRANCH=main
+REPO_BRANCH=main
 TRIER_REPO_URL=
 TRIER_REPO_BRANCH=main
 
@@ -61,6 +60,7 @@ servicos_ias/
 
 O `alpha` usa diretamente `APPS_DIR`, preservando as APIs legadas ja existentes.
 O `trier` usa `APPS_DIR_TRIER`.
+O `alpha` usa `REPO_URL` e o `trier` usa `TRIER_REPO_URL`.
 O arquivo `instance.json` guarda o tipo, o nome, o diretorio e o nome do processo no PM2.
 
 ## Fluxo de criacao
