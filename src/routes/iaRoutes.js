@@ -6,6 +6,8 @@ import {
   reiniciarInstancia,
   pararInstancia,
   listarInstancias,
+  atualizarInstancia,
+  atualizarTodasInstancias,
 } from '../services/pm2Service.js';
 import { validarCriacaoInstancia } from '../utils/validacao.js';
 
@@ -63,6 +65,28 @@ router.post('/:nome/reiniciar', async (req, res) => {
     return res.status(200).json(resultado);
   } catch (erro) {
     console.error('[REINICIAR]', erro.message);
+    return res.status(500).json({ erro: erro.message });
+  }
+});
+
+// POST /api/ia/:nome/atualizar
+router.post('/:nome/atualizar', async (req, res) => {
+  try {
+    const resultado = await atualizarInstancia(req.params.nome);
+    return res.status(200).json(resultado);
+  } catch (erro) {
+    console.error('[ATUALIZAR]', erro.message);
+    return res.status(500).json({ erro: erro.message });
+  }
+});
+
+// POST /api/ia/atualizar-todas
+router.post('/atualizar-todas', async (_req, res) => {
+  try {
+    const resultado = await atualizarTodasInstancias();
+    return res.status(200).json(resultado);
+  } catch (erro) {
+    console.error('[ATUALIZAR_TODAS]', erro.message);
     return res.status(500).json({ erro: erro.message });
   }
 });

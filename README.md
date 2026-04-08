@@ -101,5 +101,64 @@ Resposta:
 - `GET /api/ia/listar`
 - `GET /api/ia/:nome/status`
 - `GET /api/ia/:nome/logs?linhas=50`
+- `POST /api/ia/:nome/atualizar`
+- `POST /api/ia/atualizar-todas`
 - `POST /api/ia/:nome/reiniciar`
 - `POST /api/ia/:nome/parar`
+
+## Fluxo de atualizacao
+
+As atualizacoes sao processadas em fila, sempre uma instancia por vez. Isso vale
+tanto para atualizar uma instancia especifica quanto para o endpoint em lote.
+
+Ao chamar `POST /api/ia/:nome/atualizar`, o modulo executa:
+
+1. Verifica se a pasta da instancia existe
+2. Verifica se o repositorio local esta limpo (`git status --porcelain`)
+3. Executa `git pull --ff-only`
+4. Compara o commit anterior com o atual
+5. Se `package.json`, `package-lock.json` ou `npm-shrinkwrap.json` mudarem, executa `npm ci --omit=dev`
+6. Se houve novo commit, executa `pm2 restart <nome>` e `pm2 save`
+
+Se nao houver commit novo, a instancia nao e reiniciada.
+
+### Atualizar todas
+
+`POST /api/ia/atualizar-todas`
+
+Resposta exemplo:
+
+```json
+{
+  "sucesso": true,
+  "total": 2,
+  "atualizadas": 1,
+  "falhas": 0,
+  "resultados": [
+    {
+      "nome": "alpha7-a",
+      "sucesso": true,
+      "atualizado": true,
+      "reiniciado": true,
+      "dependencias_atualizadas": false,
+      "commit_anterior": "abc123",
+      "commit_atual": "def456",
+      "arquivos_alterados": [
+        "src/app.js"
+      ],
+      "mensagem": "Instancia \"alpha7-a\" atualizada com sucesso."
+    },
+    {
+      "nome": "alpha7-b",
+      "sucesso": true,
+      "atualizado": false,
+      "reiniciado": false,
+      "dependencias_atualizadas": false,
+      "commit_anterior": "zzz999",
+      "commit_atual": "zzz999",
+      "arquivos_alterados": [],
+      "mensagem": "Instancia \"alpha7-b\" ja estava atualizada."
+    }
+  ]
+}
+```

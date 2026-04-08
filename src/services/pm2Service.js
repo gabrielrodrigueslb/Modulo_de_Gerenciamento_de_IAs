@@ -1,15 +1,33 @@
-import { exec, execFileSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { reservarProximaPortaLivre } from '../utils/portaManager.js';
 
 const APPS_DIR = path.resolve(process.env.APPS_DIR || '/apps/ias');
 const REPO_URL = process.env.REPO_URL;
 const MAX_BUFFER = 10 * 1024 * 1024;
 const ENV_TEMPLATE_FILES = ['.env.example', '.env.exemplo'];
+const ROOT_DIR = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+  '..',
+);
+let filaAtualizacoes = Promise.resolve();
+let sequenciaAtualizacao = 0;
+
+function caminhoBinarioLocal(nome) {
+  const extensao = process.platform === 'win32' ? '.cmd' : '';
+  return path.join(ROOT_DIR, 'node_modules', '.bin', `${nome}${extensao}`);
+}
 
 function binario(nome) {
-  if (process.platform === 'win32' && (nome === 'npm' || nome === 'pm2')) {
+  const binarioLocal = caminhoBinarioLocal(nome);
+  if (fs.existsSync(binarioLocal)) {
+    return binarioLocal;
+  }
+
+  if (process.platform === 'win32' && (nome === 'npm' || nome === 'pm2' || nome === 'npx')) {
     return `${nome}.cmd`;
   }
 
@@ -23,12 +41,20 @@ function garantirDiretorioBase() {
 }
 
 function executarArquivo(comando, args, opcoes = {}) {
-  return execFileSync(binario(comando), args, {
+  const executavel = binario(comando);
+  return execFileSync(executavel, args, {
     encoding: 'utf8',
     maxBuffer: MAX_BUFFER,
     stdio: 'pipe',
+    shell:
+      process.platform === 'win32' &&
+      executavel.toLowerCase().endsWith('.cmd'),
     ...opcoes,
   });
+}
+
+function executarGit(args, destino) {
+  return executarArquivo('git', args, { cwd: destino });
 }
 
 function lerEnvArquivo(destino) {
@@ -84,6 +110,121 @@ function executarPm2(args, destino, sobrescritasEnv = {}) {
     cwd: destino,
     env: montarAmbienteInstancia(destino, sobrescritasEnv),
   });
+}
+
+function listarDiretoriosInstancias() {
+  garantirDiretorioBase();
+
+  return fs.readdirSync(APPS_DIR).filter((item) => {
+    return fs.statSync(path.join(APPS_DIR, item)).isDirectory();
+  });
+}
+
+function enfileirarAtualizacao(execucao) {
+  const jobId = ++sequenciaAtualizacao;
+  const anterior = filaAtualizacoes.catch(() => null);
+  const atual = anterior.then(async () => execucao(jobId));
+
+  filaAtualizacoes = atual.catch(() => null);
+
+  return atual;
+}
+
+function lerHeadCommit(destino) {
+  return executarGit(['rev-parse', 'HEAD'], destino).trim();
+}
+
+function listarArquivosAlterados(destino, commitAnterior, commitAtual) {
+  if (!commitAnterior || !commitAtual || commitAnterior === commitAtual) {
+    return [];
+  }
+
+  const saida = executarGit(
+    ['diff', '--name-only', commitAnterior, commitAtual],
+    destino,
+  );
+
+  return saida
+    .split(/\r?\n/)
+    .map((linha) => linha.trim())
+    .filter(Boolean);
+}
+
+function repositorioPossuiAlteracoesLocais(destino) {
+  return executarGit(['status', '--porcelain'], destino).trim().length > 0;
+}
+
+function precisaInstalarDependencias(arquivosAlterados) {
+  const arquivosDependencias = new Set([
+    'package.json',
+    'package-lock.json',
+    'npm-shrinkwrap.json',
+  ]);
+
+  return arquivosAlterados.some((arquivo) => arquivosDependencias.has(arquivo));
+}
+
+async function atualizarInstanciaInterna(nome, contexto = {}) {
+  const destino = path.join(APPS_DIR, nome);
+  const { jobId = null, indice = null, total = null } = contexto;
+
+  if (!fs.existsSync(destino) || !fs.statSync(destino).isDirectory()) {
+    throw new Error(`Instancia "${nome}" nao encontrada em ${APPS_DIR}.`);
+  }
+
+  const prefixoFila =
+    jobId === null ? '[ATUALIZAR]' : `[ATUALIZAR][fila=${jobId}]`;
+  const prefixoItem =
+    indice && total ? `${prefixoFila}[${indice}/${total}]` : prefixoFila;
+
+  console.log(`${prefixoItem} Iniciando atualizacao de "${nome}".`);
+
+  if (repositorioPossuiAlteracoesLocais(destino)) {
+    throw new Error(
+      `Instancia "${nome}" possui alteracoes locais no diretorio clonado.`,
+    );
+  }
+
+  const commitAnterior = lerHeadCommit(destino);
+  console.log(`${prefixoItem} HEAD antes do pull: ${commitAnterior}`);
+
+  executarGit(['pull', '--ff-only'], destino);
+
+  const commitAtual = lerHeadCommit(destino);
+  const arquivosAlterados = listarArquivosAlterados(
+    destino,
+    commitAnterior,
+    commitAtual,
+  );
+  const houveMudanca = commitAnterior !== commitAtual;
+  const instalouDependencias =
+    houveMudanca && precisaInstalarDependencias(arquivosAlterados);
+
+  if (instalouDependencias) {
+    console.log(`${prefixoItem} Dependencias alteradas; executando npm ci.`);
+    executarArquivo('npm', ['ci', '--omit=dev'], { cwd: destino });
+  }
+
+  if (houveMudanca) {
+    console.log(`${prefixoItem} Reiniciando processo no PM2.`);
+    executarArquivo('pm2', ['restart', nome]);
+    executarArquivo('pm2', ['save']);
+  } else {
+    console.log(`${prefixoItem} Nenhum commit novo para "${nome}".`);
+  }
+
+  return {
+    nome,
+    atualizado: houveMudanca,
+    reiniciado: houveMudanca,
+    dependencias_atualizadas: instalouDependencias,
+    commit_anterior: commitAnterior,
+    commit_atual: commitAtual,
+    arquivos_alterados: arquivosAlterados,
+    mensagem: houveMudanca
+      ? `Instancia "${nome}" atualizada com sucesso.`
+      : `Instancia "${nome}" ja estava atualizada.`,
+  };
 }
 
 function obterPortaInstancia(nome, instanciaPm2 = null) {
@@ -295,23 +436,28 @@ export async function statusInstancia(nome) {
 }
 
 export async function logsInstancia(nome, linhas = 50) {
-  return new Promise((resolve, reject) => {
-    exec(
-      `pm2 logs ${nome} --lines ${linhas} --nostream --raw`,
+  try {
+    const saida = executarArquivo(
+      'pm2',
+      ['logs', nome, '--lines', String(linhas), '--nostream', '--raw'],
       { timeout: 10000 },
-      (erro, stdout, stderr) => {
-        if (erro && !stdout && !stderr) {
-          return reject(
-            new Error(`Erro ao buscar logs de "${nome}": ${erro.message}`),
-          );
-        }
-
-        const saida = (stdout + stderr).trim();
-        const linhasLog = saida.split('\n').filter(Boolean);
-        resolve({ nome, linhas: linhasLog });
-      },
     );
-  });
+
+    return {
+      nome,
+      linhas: saida.split('\n').filter(Boolean),
+    };
+  } catch (erro) {
+    const saida = `${erro.stdout || ''}${erro.stderr || ''}`.trim();
+    if (saida) {
+      return {
+        nome,
+        linhas: saida.split('\n').filter(Boolean),
+      };
+    }
+
+    throw new Error(`Erro ao buscar logs de "${nome}": ${erro.message}`);
+  }
 }
 
 export async function reiniciarInstancia(nome) {
@@ -337,11 +483,7 @@ export async function pararInstancia(nome) {
 }
 
 export async function listarInstancias() {
-  garantirDiretorioBase();
-
-  const pastas = fs.readdirSync(APPS_DIR).filter((item) => {
-    return fs.statSync(path.join(APPS_DIR, item)).isDirectory();
-  });
+  const pastas = listarDiretoriosInstancias();
 
   const saida = executarArquivo('pm2', ['jlist']);
   const pm2Lista = JSON.parse(saida);
@@ -353,6 +495,50 @@ export async function listarInstancias() {
       nome,
       status: pm2?.pm2_env?.status || 'parada/nao registrada',
       porta: obterPortaInstancia(nome, pm2),
+    };
+  });
+}
+
+export async function atualizarInstancia(nome) {
+  return enfileirarAtualizacao(async (jobId) => {
+    return atualizarInstanciaInterna(nome, { jobId });
+  });
+}
+
+export async function atualizarTodasInstancias() {
+  return enfileirarAtualizacao(async (jobId) => {
+    const instancias = listarDiretoriosInstancias();
+    const resultados = [];
+
+    for (let indice = 0; indice < instancias.length; indice += 1) {
+      const nome = instancias[indice];
+
+      try {
+        const resultado = await atualizarInstanciaInterna(nome, {
+          jobId,
+          indice: indice + 1,
+          total: instancias.length,
+        });
+        resultados.push({
+          nome,
+          sucesso: true,
+          ...resultado,
+        });
+      } catch (erro) {
+        resultados.push({
+          nome,
+          sucesso: false,
+          erro: erro.message,
+        });
+      }
+    }
+
+    return {
+      sucesso: resultados.every((item) => item.sucesso),
+      total: resultados.length,
+      atualizadas: resultados.filter((item) => item.atualizado).length,
+      falhas: resultados.filter((item) => !item.sucesso).length,
+      resultados,
     };
   });
 }
