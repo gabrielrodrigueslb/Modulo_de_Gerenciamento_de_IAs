@@ -54,5 +54,15 @@ export function validarCriacaoInstancia(req, res, next) {
     });
   }
 
+  if (tipo === 'trier') {
+    const tokenTrier = req.body.env?.TRIER_TOKEN;
+
+    if (!tokenTrier || !String(tokenTrier).trim()) {
+      return res.status(400).json({
+        erro: 'Para instancias Trier, envie env.TRIER_TOKEN.',
+      });
+    }
+  }
+
   next();
 }

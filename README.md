@@ -102,14 +102,16 @@ Ao chamar `POST /api/ia/criar`, o modulo:
   "tipo": "trier",
   "nome": "trier-farmacia-xyz",
   "env": {
-    "TOKEN_TRIER": "abc",
-    "API_URL": "https://cliente.exemplo.com"
+    "TRIER_TOKEN": "abc",
+    "TRIER_BASE_URL": "https://api-sgf-gateway.triersistemas.com.br/sgfpod1",
+    "OPENAI_API_KEY": "sk-..."
   }
 }
 ```
 
 Se `tipo` nao for enviado, o modulo assume `alpha` por compatibilidade.
 No caso de `alpha`, o diretorio usado e o proprio `APPS_DIR`.
+No caso de `trier`, `env.TRIER_TOKEN` e obrigatorio. `TRIER_BASE_URL` e opcional se o repositorio ja tiver valor default.
 
 ## Listagem e integridade
 
