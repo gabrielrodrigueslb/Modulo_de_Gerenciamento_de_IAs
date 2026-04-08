@@ -1,4 +1,5 @@
-const CAMPOS_OBRIGATORIOS = [
+const TIPOS_SUPORTADOS = ['alpha', 'trier'];
+const CAMPOS_OBRIGATORIOS_ALPHA = [
   'nome',
   'openai_api_key',
   'db_host',
@@ -8,7 +9,17 @@ const CAMPOS_OBRIGATORIOS = [
 ];
 
 export function validarCriacaoInstancia(req, res, next) {
-  const ausentes = CAMPOS_OBRIGATORIOS.filter((campo) => !req.body[campo]);
+  const tipo = String(req.body.tipo || 'alpha').trim().toLowerCase();
+
+  if (!TIPOS_SUPORTADOS.includes(tipo)) {
+    return res.status(400).json({
+      erro: 'O campo "tipo" deve ser "alpha" ou "trier".',
+    });
+  }
+
+  const camposObrigatorios =
+    tipo === 'alpha' ? CAMPOS_OBRIGATORIOS_ALPHA : ['nome'];
+  const ausentes = camposObrigatorios.filter((campo) => !req.body[campo]);
 
   if (ausentes.length > 0) {
     return res.status(400).json({
@@ -20,6 +31,15 @@ export function validarCriacaoInstancia(req, res, next) {
   if (!/^[a-zA-Z0-9-_]+$/.test(req.body.nome)) {
     return res.status(400).json({
       erro: 'O campo "nome" so pode conter letras, numeros, hifens e underscores.',
+    });
+  }
+
+  if (
+    req.body.tipo !== undefined &&
+    !TIPOS_SUPORTADOS.includes(String(req.body.tipo).trim().toLowerCase())
+  ) {
+    return res.status(400).json({
+      erro: 'O campo "tipo" deve ser "alpha" ou "trier".',
     });
   }
 
