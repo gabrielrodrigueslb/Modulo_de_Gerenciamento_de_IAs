@@ -602,8 +602,8 @@ function precisaInstalarDependencias(arquivosAlterados) {
 
 function resolverNomePm2(instancia) {
   const candidatos = [
-    instancia.metadata?.nome_pm2,
     instancia.pm2?.nome_pm2,
+    instancia.metadata?.nome_pm2,
     nomePm2Padrao(instancia.tipo, instancia.nome),
     instancia.nome,
     `ia-${instancia.nome}`,
