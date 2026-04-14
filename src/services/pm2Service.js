@@ -89,6 +89,18 @@ function executarGit(args, destino) {
   return executarArquivo('git', args, { cwd: destino });
 }
 
+function lerRemoteOriginUrl(destino) {
+  try {
+    return executarGit(['remote', 'get-url', 'origin'], destino).trim();
+  } catch {
+    return null;
+  }
+}
+
+function lerBranchAtual(destino) {
+  return executarGit(['rev-parse', '--abbrev-ref', 'HEAD'], destino).trim();
+}
+
 function nomePm2Padrao(tipo, nome) {
   return `ia-${normalizeTipo(tipo)}-${nome}`;
 }
@@ -590,6 +602,69 @@ function repositorioPossuiAlteracoesLocais(destino) {
   return executarGit(['status', '--porcelain'], destino).trim().length > 0;
 }
 
+function sincronizarRepositorioComEnv(instancia, destino, prefixoLog) {
+  const config = obterConfigTipo(instancia.tipo);
+  const repoUrlDesejado = config.repoUrl || instancia.metadata?.repo_url || null;
+  const branchDesejada = config.repoBranch || instancia.metadata?.repo_branch || null;
+
+  if (!repoUrlDesejado) {
+    throw new Error(
+      `Repositorio nao configurado para "${instancia.tipo}". Ajuste ${
+        instancia.tipo === 'alpha' ? 'REPO_URL' : 'TRIER_REPO_URL'
+      } no .env do modulo.`,
+    );
+  }
+
+  const remoteAtual = lerRemoteOriginUrl(destino);
+  if (remoteAtual !== repoUrlDesejado) {
+    console.log(
+      `${prefixoLog} Ajustando remote origin de "${remoteAtual || 'indefinido'}" para "${repoUrlDesejado}".`,
+    );
+    executarGit(['remote', 'set-url', 'origin', repoUrlDesejado], destino);
+  }
+
+  if (branchDesejada) {
+    console.log(
+      `${prefixoLog} Sincronizando branch com o .env: ${branchDesejada}.`,
+    );
+    executarGit(['fetch', 'origin', branchDesejada, '--prune'], destino);
+
+    const branchAtual = lerBranchAtual(destino);
+    if (branchAtual !== branchDesejada) {
+      try {
+        executarGit(['checkout', branchDesejada], destino);
+      } catch {
+        executarGit(
+          ['checkout', '-B', branchDesejada, `origin/${branchDesejada}`],
+          destino,
+        );
+      }
+    }
+
+    try {
+      executarGit(
+        ['branch', '--set-upstream-to', `origin/${branchDesejada}`, branchDesejada],
+        destino,
+      );
+    } catch {
+      // segue sem bloquear; o pull abaixo usa origin/branch explicitamente
+    }
+  }
+
+  const metadataAtualizada = {
+    ...instancia.metadata,
+    repo_url: repoUrlDesejado,
+    repo_branch: branchDesejada,
+  };
+  salvarMetadataInstancia(destino, metadataAtualizada);
+  instancia.metadata = metadataAtualizada;
+
+  return {
+    repoUrlDesejado,
+    branchDesejada,
+  };
+}
+
 function precisaInstalarDependencias(arquivosAlterados) {
   const arquivosDependencias = new Set([
     'package.json',
@@ -637,10 +712,20 @@ async function atualizarInstanciaInterna(instancia, contexto = {}) {
     );
   }
 
+  const { branchDesejada } = sincronizarRepositorioComEnv(
+    instancia,
+    destino,
+    prefixoItem,
+  );
+
   const commitAnterior = lerHeadCommit(destino);
   console.log(`${prefixoItem} HEAD antes do pull: ${commitAnterior}`);
 
-  executarGit(['pull', '--ff-only'], destino);
+  if (branchDesejada) {
+    executarGit(['pull', '--ff-only', 'origin', branchDesejada], destino);
+  } else {
+    executarGit(['pull', '--ff-only'], destino);
+  }
 
   const commitAtual = lerHeadCommit(destino);
   const arquivosAlterados = listarArquivosAlterados(
