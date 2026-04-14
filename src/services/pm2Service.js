@@ -598,8 +598,44 @@ function listarArquivosAlterados(destino, commitAnterior, commitAtual) {
     .filter(Boolean);
 }
 
-function repositorioPossuiAlteracoesLocais(destino) {
-  return executarGit(['status', '--porcelain'], destino).trim().length > 0;
+function listarAlteracoesLocaisRepositorio(destino) {
+  const saida = executarGit(['status', '--porcelain'], destino);
+
+  return saida
+    .split(/\r?\n/)
+    .map((linha) => linha.trimEnd())
+    .filter(Boolean)
+    .map((linha) => {
+      const status = linha.slice(0, 2);
+      const arquivo = linha.slice(3).trim();
+
+      return {
+        bruto: linha,
+        status,
+        arquivo,
+      };
+    });
+}
+
+function alteracaoLocalIgnoravel(item) {
+  const arquivo = String(item?.arquivo || '').replace(/\\/g, '/');
+
+  if (!arquivo) {
+    return false;
+  }
+
+  return (
+    arquivo === 'instance.json' ||
+    arquivo === '.env' ||
+    arquivo.startsWith('.env.') ||
+    arquivo === '.env.local'
+  );
+}
+
+function listarAlteracoesLocaisRelevantes(destino) {
+  return listarAlteracoesLocaisRepositorio(destino).filter(
+    (item) => !alteracaoLocalIgnoravel(item),
+  );
 }
 
 function sincronizarRepositorioComEnv(instancia, destino, prefixoLog) {
@@ -706,9 +742,12 @@ async function atualizarInstanciaInterna(instancia, contexto = {}) {
     `${prefixoItem} Iniciando atualizacao de "${instancia.tipo}/${instancia.nome}".`,
   );
 
-  if (repositorioPossuiAlteracoesLocais(destino)) {
+  const alteracoesLocais = listarAlteracoesLocaisRelevantes(destino);
+  if (alteracoesLocais.length > 0) {
     throw new Error(
-      `Instancia "${instancia.tipo}/${instancia.nome}" possui alteracoes locais no diretorio clonado.`,
+      `Instancia "${instancia.tipo}/${instancia.nome}" possui alteracoes locais no diretorio clonado: ${alteracoesLocais
+        .map((item) => item.arquivo || item.bruto)
+        .join(', ')}.`,
     );
   }
 
